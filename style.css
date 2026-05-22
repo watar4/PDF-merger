@@ -54,6 +54,12 @@ footer a:hover { text-decoration: underline; }
 }
 .drop-zone p { margin: 0.5rem 0; }
 .hint { color: var(--muted); font-size: 0.85rem; }
+.hint code {
+  background: var(--bg-alt);
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
 
 .btn {
   display: inline-block;
@@ -96,13 +102,35 @@ footer a:hover { text-decoration: underline; }
   border-top: 1px solid var(--border);
   background: var(--bg);
   cursor: grab;
+  flex-wrap: wrap;
 }
 .file-list li:first-child { border-top: none; }
 .file-list li.dragging { opacity: 0.4; }
 .file-list li.drag-over { border-top: 2px solid var(--accent); }
 .handle { color: var(--muted); cursor: grab; user-select: none; }
-.file-name { flex: 1; word-break: break-all; }
-.file-meta { color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
+.file-info { flex: 1 1 200px; min-width: 0; }
+.file-name { word-break: break-all; }
+.file-meta { color: var(--muted); font-size: 0.85rem; }
+.page-spec {
+  flex: 1 1 180px;
+  min-width: 140px;
+  max-width: 280px;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  cursor: text;
+}
+.page-spec:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.2);
+}
+.page-spec.invalid {
+  border-color: var(--danger);
+  background: #fff5f5;
+}
 .remove-btn {
   background: none;
   border: none;

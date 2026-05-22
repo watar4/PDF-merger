@@ -10,7 +10,7 @@
 <body>
   <header>
     <h1>PDF Merger</h1>
-    <p class="lead">複数の PDF をひとつにまとめます。<strong>ファイルはあなたの端末から送信されません</strong>(すべてブラウザ内で処理)。</p>
+    <p class="lead">複数の PDF をひとつにまとめます。各 PDF ごとに <strong>使うページ / 削除するページ</strong> を指定可。<strong>ファイルはあなたの端末から送信されません</strong>(すべてブラウザ内で処理)。</p>
   </header>
 
   <main>
@@ -26,7 +26,10 @@
     <section id="list-section" hidden>
       <div class="list-header">
         <h2>結合する順番</h2>
-        <p class="hint">ドラッグで並べ替え / × で削除</p>
+        <p class="hint">
+          ドラッグで並べ替え / × で削除 / ページ欄:
+          空欄=全ページ、<code>1-3,5</code>=そのページのみ、<code>-4</code>=4ページ目を削除
+        </p>
       </div>
       <ul id="file-list" class="file-list"></ul>
 

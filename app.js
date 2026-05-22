@@ -10,7 +10,8 @@
   const outputNameInput = document.getElementById('output-name');
   const statusEl = document.getElementById('status');
 
-  let files = [];
+  /** @type {{file: File, bytes: ArrayBuffer, pageCount: number, pageSpec: string}[]} */
+  let items = [];
   let dragSrcIndex = null;
 
   function formatSize(bytes) {
@@ -24,26 +25,117 @@
     statusEl.className = 'status' + (kind ? ' ' + kind : '');
   }
 
+  // --- Page spec parsing ---------------------------------------------------
+  // Returns 0-based page indices to copy from a source PDF.
+  // Syntax (1-based page numbers):
+  //   ""           → all pages
+  //   "1-3,5"      → include just these pages, in this order
+  //   "-4"         → exclude page 4 (other pages kept in original order)
+  //   "-4,-6"      → exclude pages 4 and 6
+  //   "-2-5"       → exclude pages 2 through 5
+  // Mixing include & exclude in one spec is rejected.
+  function resolvePageSpec(spec, total) {
+    const allIndices = Array.from({ length: total }, (_, i) => i);
+    const trimmed = (spec || '').trim();
+    if (!trimmed || trimmed.toLowerCase() === 'all') return allIndices;
+
+    const parts = trimmed.split(',').map(s => s.trim()).filter(Boolean);
+    const flags = parts.map(p => p.startsWith('-'));
+    const allExclude = flags.every(Boolean);
+    const anyExclude = flags.some(Boolean);
+
+    if (anyExclude && !allExclude) {
+      throw new Error('「-」を付けるなら全部に付けてください(例: -2,-5 はOK / 1-3,-5 は不可)');
+    }
+
+    if (allExclude) {
+      const exSet = new Set();
+      for (const part of parts) {
+        parseRange(part.slice(1), total).forEach(i => exSet.add(i));
+      }
+      const kept = allIndices.filter(i => !exSet.has(i));
+      if (kept.length === 0) throw new Error('全ページが除外指定になっています');
+      return kept;
+    }
+
+    const result = [];
+    for (const part of parts) {
+      parseRange(part, total).forEach(i => result.push(i));
+    }
+    return result;
+  }
+
+  function parseRange(s, total) {
+    if (s.includes('-')) {
+      const m = s.match(/^(\d+)\s*-\s*(\d+)$/);
+      if (!m) throw new Error(`ページ指定が読めません: "${s}"`);
+      const a = parseInt(m[1], 10);
+      const b = parseInt(m[2], 10);
+      const lo = Math.min(a, b);
+      const hi = Math.max(a, b);
+      if (lo < 1 || hi > total) throw new Error(`範囲外: ${s}(1〜${total})`);
+      const out = [];
+      for (let i = lo; i <= hi; i++) out.push(i - 1);
+      return out;
+    }
+    const n = parseInt(s, 10);
+    if (!Number.isFinite(n)) throw new Error(`ページ指定が読めません: "${s}"`);
+    if (n < 1 || n > total) throw new Error(`範囲外: ${n}(1〜${total})`);
+    return [n - 1];
+  }
+
+  // --- Rendering -----------------------------------------------------------
   function render() {
-    listSection.hidden = files.length === 0;
+    listSection.hidden = items.length === 0;
     fileListEl.innerHTML = '';
-    files.forEach((file, index) => {
+    items.forEach((item, index) => {
       const li = document.createElement('li');
       li.draggable = true;
       li.dataset.index = String(index);
       li.innerHTML = `
-        <span class="handle" aria-hidden="true">⋮⋮</span>
-        <span class="file-name"></span>
-        <span class="file-meta"></span>
+        <span class="handle" aria-hidden="true" title="ドラッグで並べ替え">⋮⋮</span>
+        <div class="file-info">
+          <div class="file-name"></div>
+          <div class="file-meta"></div>
+        </div>
+        <input class="page-spec" type="text" spellcheck="false"
+               placeholder="全ページ(例: 1-3,5 / -4)" />
         <button class="remove-btn" type="button" aria-label="削除">×</button>
       `;
-      li.querySelector('.file-name').textContent = file.name;
-      li.querySelector('.file-meta').textContent = formatSize(file.size);
+      li.querySelector('.file-name').textContent = item.file.name;
+      li.querySelector('.file-meta').textContent =
+        `${formatSize(item.file.size)} · ${item.pageCount} ページ`;
+
+      const specInput = li.querySelector('.page-spec');
+      specInput.value = item.pageSpec;
+      specInput.addEventListener('input', () => {
+        item.pageSpec = specInput.value;
+        specInput.classList.remove('invalid');
+        specInput.title = '';
+        if (specInput.value.trim()) {
+          try {
+            resolvePageSpec(specInput.value, item.pageCount);
+          } catch (e) {
+            specInput.classList.add('invalid');
+            specInput.title = e.message;
+          }
+        }
+      });
+      // Stop row-drag from hijacking text selection inside the input
+      specInput.addEventListener('mousedown', (e) => e.stopPropagation());
+      specInput.addEventListener('dragstart', (e) => e.preventDefault());
+
       li.querySelector('.remove-btn').addEventListener('click', () => {
-        files.splice(index, 1);
+        items.splice(index, 1);
         render();
       });
+
       li.addEventListener('dragstart', (e) => {
+        // Don't start row-drag if user clicked inside the input
+        if (e.target.classList.contains('page-spec')) {
+          e.preventDefault();
+          return;
+        }
         dragSrcIndex = index;
         li.classList.add('dragging');
         e.dataTransfer.effectAllowed = 'move';
@@ -64,29 +156,52 @@
         e.stopPropagation();
         li.classList.remove('drag-over');
         if (dragSrcIndex === null || dragSrcIndex === index) return;
-        const moved = files.splice(dragSrcIndex, 1)[0];
-        files.splice(index, 0, moved);
+        const moved = items.splice(dragSrcIndex, 1)[0];
+        items.splice(index, 0, moved);
         dragSrcIndex = null;
         render();
       });
+
       fileListEl.appendChild(li);
     });
   }
 
-  function addFiles(fileList) {
-    const added = [];
+  // --- File adding ---------------------------------------------------------
+  async function addFiles(fileList) {
+    const pdfs = [];
     for (const f of fileList) {
       if (f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')) {
-        added.push(f);
+        pdfs.push(f);
       }
     }
-    if (added.length === 0) {
+    if (pdfs.length === 0) {
       setStatus('PDF ファイルが見つかりませんでした。', 'error');
       return;
     }
-    files = files.concat(added);
-    setStatus(`${added.length} 件追加しました(合計 ${files.length} 件)`);
-    render();
+
+    let added = 0;
+    for (let i = 0; i < pdfs.length; i++) {
+      const f = pdfs[i];
+      setStatus(`読み込み中 (${i + 1}/${pdfs.length}): ${f.name}`);
+      try {
+        const bytes = await f.arrayBuffer();
+        const doc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+        items.push({
+          file: f,
+          bytes,
+          pageCount: doc.getPageCount(),
+          pageSpec: '',
+        });
+        added++;
+        render();
+      } catch (err) {
+        console.error('failed to load', f.name, err);
+        setStatus(`読み込み失敗: ${f.name}(${err.message || err})`, 'error');
+      }
+    }
+    if (added > 0) {
+      setStatus(`${added} 件追加しました(合計 ${items.length} 件)`);
+    }
   }
 
   fileInput.addEventListener('change', (e) => {
@@ -113,23 +228,38 @@
   });
 
   clearBtn.addEventListener('click', () => {
-    files = [];
+    items = [];
     setStatus('');
     render();
   });
 
+  // --- Merge ---------------------------------------------------------------
   mergeBtn.addEventListener('click', async () => {
-    if (files.length === 0) return;
+    if (items.length === 0) return;
     mergeBtn.disabled = true;
+
+    // Pre-validate every page spec before touching pdf-lib
+    const resolved = [];
+    try {
+      for (const it of items) {
+        resolved.push(resolvePageSpec(it.pageSpec, it.pageCount));
+      }
+    } catch (err) {
+      setStatus('ページ指定エラー: ' + err.message, 'error');
+      mergeBtn.disabled = false;
+      return;
+    }
+
     setStatus('結合中...');
     try {
       const merged = await PDFDocument.create();
-      for (let i = 0; i < files.length; i++) {
-        setStatus(`読み込み中 (${i + 1}/${files.length}): ${files[i].name}`);
-        const bytes = await files[i].arrayBuffer();
-        const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
-        const pages = await merged.copyPages(src, src.getPageIndices());
+      let totalOutPages = 0;
+      for (let i = 0; i < items.length; i++) {
+        setStatus(`処理中 (${i + 1}/${items.length}): ${items[i].file.name}`);
+        const src = await PDFDocument.load(items[i].bytes, { ignoreEncryption: true });
+        const pages = await merged.copyPages(src, resolved[i]);
         pages.forEach(p => merged.addPage(p));
+        totalOutPages += pages.length;
       }
       setStatus('書き出し中...');
       const out = await merged.save();
@@ -144,7 +274,10 @@
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setStatus(`完了: ${name} をダウンロードしました(${files.length} 件 / ${formatSize(out.byteLength)})`, 'success');
+      setStatus(
+        `完了: ${name} をダウンロード(${items.length} ファイル / ${totalOutPages} ページ / ${formatSize(out.byteLength)})`,
+        'success'
+      );
     } catch (err) {
       console.error(err);
       setStatus('エラー: ' + (err && err.message ? err.message : err), 'error');
@@ -153,7 +286,7 @@
     }
   });
 
-  // Try to fill the GitHub repo link automatically when hosted on github.io
+  // --- Footer repo link ----------------------------------------------------
   const repoLink = document.getElementById('repo-link');
   const host = location.hostname;
   if (host.endsWith('.github.io')) {
