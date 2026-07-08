@@ -9,6 +9,24 @@
   const clearBtn = document.getElementById('clear-btn');
   const outputNameInput = document.getElementById('output-name');
   const statusEl = document.getElementById('status');
+  const alignWidthCheck = document.getElementById('align-width');
+  const alignBasisSelect = document.getElementById('align-basis');
+
+  // A4 縦の幅(210mm)をポイント換算
+  const A4_WIDTH_PT = 595.28;
+
+  alignWidthCheck.addEventListener('change', () => {
+    alignBasisSelect.disabled = !alignWidthCheck.checked;
+  });
+
+  // 回転を考慮した「見た目」の横幅・縦幅を返す
+  function visibleSize(page) {
+    const { width, height } = page.getSize();
+    const angle = ((page.getRotation().angle % 360) + 360) % 360;
+    return (angle === 90 || angle === 270)
+      ? { w: height, h: width }
+      : { w: width, h: height };
+  }
 
   /** @type {{file: File, bytes: ArrayBuffer, pageCount: number, pageSpec: string}[]} */
   let items = [];
@@ -254,13 +272,34 @@
     try {
       const merged = await PDFDocument.create();
       let totalOutPages = 0;
+      const addedPages = [];
       for (let i = 0; i < items.length; i++) {
         setStatus(`処理中 (${i + 1}/${items.length}): ${items[i].file.name}`);
         const src = await PDFDocument.load(items[i].bytes, { ignoreEncryption: true });
         const pages = await merged.copyPages(src, resolved[i]);
-        pages.forEach(p => merged.addPage(p));
+        pages.forEach(p => {
+          merged.addPage(p);
+          addedPages.push(p);
+        });
         totalOutPages += pages.length;
       }
+
+      // 横幅を揃える(縦横比は維持したまま拡大縮小)
+      if (alignWidthCheck.checked && addedPages.length > 0) {
+        setStatus('横幅を揃えています...');
+        const widths = addedPages.map(p => visibleSize(p).w);
+        let targetW;
+        if (alignBasisSelect.value === 'min') targetW = Math.min(...widths);
+        else if (alignBasisSelect.value === 'a4') targetW = A4_WIDTH_PT;
+        else targetW = Math.max(...widths);
+
+        addedPages.forEach(p => {
+          const { w } = visibleSize(p);
+          const scale = targetW / w;
+          if (Math.abs(scale - 1) > 1e-4) p.scale(scale, scale);
+        });
+      }
+
       setStatus('書き出し中...');
       const out = await merged.save();
       const blob = new Blob([out], { type: 'application/pdf' });

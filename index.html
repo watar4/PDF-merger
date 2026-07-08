@@ -33,6 +33,22 @@
       </div>
       <ul id="file-list" class="file-list"></ul>
 
+      <div class="merge-options">
+        <label class="option-check">
+          <input id="align-width" type="checkbox">
+          全ページの横幅を揃える
+        </label>
+        <label class="option-basis">
+          基準幅
+          <select id="align-basis" disabled>
+            <option value="max">最大幅に合わせる</option>
+            <option value="min">最小幅に合わせる</option>
+            <option value="a4">A4縦(210mm)の幅</option>
+          </select>
+        </label>
+        <p class="hint">縦横比は保ったまま拡大縮小します(縦の長さはページごとに変わります)。</p>
+      </div>
+
       <div class="actions">
         <label class="filename-field">
           出力ファイル名
